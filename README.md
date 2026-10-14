@@ -2,6 +2,8 @@
 
 A Swiss Army knife for CSV in VS Code. You get a typed grid to view and edit data, Excel-style filters, multi-column sorting, **SQL queries**, **column transforms including decryption**, column profiles, lint and repair, comparison, split and merge, and export to almost anything.
 
+For a guided tour, read the blog post [CSV Studio: Query, Filter and Decrypt CSV Files Without Leaving VS Code](https://rizwanansari.net/csv-studio-query-filter-and-decrypt-csv-files-without-leaving-vs-code/).
+
 ![The CSV Studio grid with detected column types, a filter and a two-column sort](images/screenshots/grid.png)
 
 ## Open it
