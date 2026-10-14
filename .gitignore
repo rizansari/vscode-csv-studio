@@ -4,3 +4,4 @@ dist/
 .vscode-test/
 test/fixtures/array-of-objects.json
 test/fixtures/sales.csv
+.DS_Store
