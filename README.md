@@ -2,6 +2,8 @@
 
 A Swiss Army knife for CSV in VS Code. You get a typed grid to view and edit data, Excel-style filters, multi-column sorting, **SQL queries**, **column transforms including decryption**, column profiles, lint and repair, comparison, split and merge, and export to almost anything.
 
+![The CSV Studio grid with detected column types, a filter and a two-column sort](images/screenshots/grid.png)
+
 ## Open it
 
 - Click the split-view icon in the editor title bar of any `.csv` / `.tsv` / `.psv` file (**Open CSV Studio to the Side**).
@@ -45,6 +47,8 @@ GROUP BY region
 ORDER BY revenue DESC
 ```
 
+![The SQL panel running a GROUP BY query below the grid](images/screenshots/sql.png)
+
 - Columns are stored as their detected types. `$1,200` becomes the number 1200, and dates become ISO text, so `strftime()` works.
 - **+ table** (or **CSV Studio: Add Table from File…**) adds other CSV files as tables you can JOIN.
 - Extra functions:
@@ -67,6 +71,8 @@ Open **Transform** from the toolbar, a column header or a cell. Pick a column an
 - **Virtual column:** shown in the grid and usable in SQL, but **never written to the file**. Ideal for decrypted data.
 - **New column** next to the source column.
 - **Replace values** in place (⌘Z undoes it).
+
+![The Transform dialog previewing AES-GCM decryption of a card column](images/screenshots/transform.png)
 
 | Group | Transforms |
 |---|---|
@@ -101,6 +107,9 @@ export default function (value, row, ctx) {
   - Type match, with a shortcut to show only the invalid cells.
   - For numbers and dates: min, max, mean, median, P95, sum.
   - Text length range, and the top values with bars. Click a bar to filter to that value.
+
+![The Profile panel showing statistics for a currency column](images/screenshots/profile.png)
+
 - **Lint:** ragged rows, unterminated quotes, blank lines, mixed line endings, duplicate or empty header names, and a trailing empty column. These appear in the Problems panel and as a banner.
 - **Lint & Repair** shows a diff before it changes anything. It pads short rows, names extra columns, drops blank lines and fixes quoting.
 
