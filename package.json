@@ -1,0 +1,275 @@
+{
+  "name": "csv-studio",
+  "displayName": "CSV Studio",
+  "description": "Swiss army knife for CSV: typed grid view & editing, filters, multi-sort, SQL queries (SQLite), column transforms incl. decryption, profiling, lint/repair, diff, split/merge and export.",
+  "version": "0.1.0",
+  "publisher": "RizwanAnsari",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#0f2a1d",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Data Science",
+    "Visualization",
+    "Formatters",
+    "Other"
+  ],
+  "keywords": [
+    "csv",
+    "tsv",
+    "sql",
+    "sqlite",
+    "table",
+    "grid",
+    "spreadsheet",
+    "decrypt"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:csv",
+    "onLanguage:tsv",
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "User-defined JavaScript transforms only run in trusted workspaces."
+    }
+  },
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "csvStudio.editor",
+        "displayName": "CSV Studio",
+        "selector": [
+          {
+            "filenamePattern": "*.csv"
+          },
+          {
+            "filenamePattern": "*.tsv"
+          },
+          {
+            "filenamePattern": "*.tab"
+          },
+          {
+            "filenamePattern": "*.psv"
+          }
+        ],
+        "priority": "option"
+      },
+      {
+        "viewType": "csvStudio.largeViewer",
+        "displayName": "CSV Studio (large file, read-only)",
+        "selector": [
+          {
+            "filenamePattern": "*.csv"
+          },
+          {
+            "filenamePattern": "*.tsv"
+          },
+          {
+            "filenamePattern": "*.psv"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
+    "commands": [
+      {
+        "command": "csvStudio.open",
+        "title": "Open in CSV Studio",
+        "category": "CSV Studio",
+        "icon": "$(table)"
+      },
+      {
+        "command": "csvStudio.openToSide",
+        "title": "Open CSV Studio to the Side",
+        "category": "CSV Studio",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "csvStudio.openLarge",
+        "title": "Open Large CSV (Read-Only)",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.query",
+        "title": "SQL Query",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.repair",
+        "title": "Lint & Repair CSV",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.changeDialect",
+        "title": "Change Delimiter / Quoting / Line Endings…",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.setSecret",
+        "title": "Set Secret (Key / Password)…",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.deleteSecret",
+        "title": "Delete Secret…",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.newTransform",
+        "title": "New JavaScript Transform…",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.addTable",
+        "title": "Add Table from File (for SQL JOINs)…",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.splitFile",
+        "title": "Split File…",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.mergeFiles",
+        "title": "Merge / Append CSV Files…",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.diffWithFile",
+        "title": "Compare with CSV File (by Key)…",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.convertTo",
+        "title": "Convert CSV to JSON / YAML / Markdown…",
+        "category": "CSV Studio"
+      },
+      {
+        "command": "csvStudio.convertFromJson",
+        "title": "Convert JSON to CSV",
+        "category": "CSV Studio"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "csvStudio.openToSide",
+          "when": "resourceExtname =~ /\\.(csv|tsv|tab|psv)$/",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "csvStudio.open",
+          "when": "resourceExtname =~ /\\.(csv|tsv|tab|psv)$/",
+          "group": "navigation@9"
+        },
+        {
+          "command": "csvStudio.openLarge",
+          "when": "resourceExtname =~ /\\.(csv|tsv|psv)$/",
+          "group": "navigation@9"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "csvStudio.repair",
+          "when": "resourceExtname =~ /\\.(csv|tsv|tab|psv)$/",
+          "group": "1_modification"
+        },
+        {
+          "command": "csvStudio.changeDialect",
+          "when": "resourceExtname =~ /\\.(csv|tsv|tab|psv)$/",
+          "group": "1_modification"
+        },
+        {
+          "command": "csvStudio.convertFromJson",
+          "when": "resourceLangId == json",
+          "group": "1_modification"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "csvStudio.query",
+        "key": "ctrl+alt+q",
+        "mac": "cmd+alt+q",
+        "when": "resourceExtname =~ /\\.(csv|tsv|tab|psv)$/"
+      }
+    ],
+    "configuration": {
+      "title": "CSV Studio",
+      "properties": {
+        "csvStudio.rainbowColumns": {
+          "type": "boolean",
+          "default": true,
+          "description": "Color each column differently in the text editor."
+        },
+        "csvStudio.sqlPreviewLimit": {
+          "type": "number",
+          "default": 10000,
+          "description": "Maximum rows shown for a SQL result (export always writes all rows)."
+        },
+        "csvStudio.typeInferenceSample": {
+          "type": "number",
+          "default": 100000,
+          "description": "Number of rows sampled when inferring column types."
+        },
+        "csvStudio.transformTimeoutMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "Time limit per value for user JavaScript transforms."
+        },
+        "csvStudio.queryHistorySize": {
+          "type": "number",
+          "default": 30,
+          "description": "Number of SQL queries to keep in history."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run build:ext && npm run build:webview",
+    "build:ext": "node esbuild.mjs",
+    "build:webview": "vite build --config webview/vite.config.ts",
+    "watch:ext": "node esbuild.mjs --watch",
+    "watch:webview": "vite build --watch --config webview/vite.config.ts",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p webview",
+    "test": "vitest run",
+    "test:integration": "npm run build && esbuild test/integration/suite.ts --bundle --platform=node --format=cjs --external:vscode --outfile=dist/test/suite.js && node test/integration/runTest.mjs",
+    "package": "vsce package --no-dependencies --allow-missing-repository",
+    "vscode:prepublish": "node esbuild.mjs --production && npm run build:webview"
+  },
+  "dependencies": {
+    "iconv-lite": "^0.7.3",
+    "js-yaml": "^5.4.3",
+    "papaparse": "^5.7.0",
+    "sql.js": "^1.14.2"
+  },
+  "devDependencies": {
+    "@tanstack/react-virtual": "^3.14.19",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.19.43",
+    "@types/papaparse": "^5.5.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/sql.js": "^1.4.11",
+    "@types/vscode": "^1.90.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.4",
+    "vitest": "^4.1.11"
+  }
+}

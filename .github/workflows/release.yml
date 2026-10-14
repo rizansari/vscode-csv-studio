@@ -1,0 +1,68 @@
+name: Release
+
+# Publishes the extension to the VS Code Marketplace when a GitHub release is published.
+# The release tag (e.g. v1.2.3 or 1.2.3) sets the extension version.
+# Required repository secret: VSCE_PAT (Azure DevOps PAT with Marketplace > Manage scope).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to (re)publish, e.g. v1.2.3
+        required: true
+
+permissions:
+  contents: write # to upload the .vsix to the release
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set version from tag
+        run: |
+          VERSION="${TAG#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag '$TAG' is not a valid version (expected vX.Y.Z or X.Y.Z)"
+            exit 1
+          fi
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Package
+        run: npx vsce package --no-dependencies --out "csv-studio-$VERSION.vsix"
+
+      - name: Publish to VS Code Marketplace
+        run: npx vsce publish --no-dependencies --packagePath "csv-studio-$VERSION.vsix"
+        env:
+          VSCE_PAT: ${{ secrets.VS_MARKETPLACE_TOKEN }}
+
+      - name: Attach .vsix to release
+        run: gh release upload "$TAG" "csv-studio-$VERSION.vsix" --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
