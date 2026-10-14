@@ -2,9 +2,17 @@
   "name": "csv-studio",
   "displayName": "CSV Studio",
   "description": "Swiss army knife for CSV: typed grid view & editing, filters, multi-sort, SQL queries (SQLite), column transforms incl. decryption, profiling, lint/repair, diff, split/merge and export.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "RizwanAnsari",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rizansari/vscode-csv-studio.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rizansari/vscode-csv-studio/issues"
+  },
+  "homepage": "https://github.com/rizansari/vscode-csv-studio#readme",
   "icon": "images/icon.png",
   "galleryBanner": {
     "color": "#162639",
