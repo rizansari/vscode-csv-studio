@@ -1,8 +1,8 @@
 {
   "name": "csv-studio-pro",
-  "displayName": "CSV Studio",
+  "displayName": "CSV Studio Pro",
   "description": "Swiss army knife for CSV: typed grid view & editing, filters, multi-sort, SQL queries (SQLite), column transforms incl. decryption, profiling, lint/repair, diff, split/merge and export.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "RizwanAnsari",
   "license": "MIT",
   "repository": {
