@@ -55,14 +55,14 @@ jobs:
         run: npm test
 
       - name: Package
-        run: npx vsce package --no-dependencies --out "csv-studio-$VERSION.vsix"
+        run: npx vsce package --no-dependencies --out "csv-studio-pro-$VERSION.vsix"
 
       - name: Publish to VS Code Marketplace
-        run: npx vsce publish --no-dependencies --packagePath "csv-studio-$VERSION.vsix"
+        run: npx vsce publish --no-dependencies --packagePath "csv-studio-pro-$VERSION.vsix"
         env:
           VSCE_PAT: ${{ secrets.VS_MARKETPLACE_TOKEN }}
 
       - name: Attach .vsix to release
-        run: gh release upload "$TAG" "csv-studio-$VERSION.vsix" --clobber
+        run: gh release upload "$TAG" "csv-studio-pro-$VERSION.vsix" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
