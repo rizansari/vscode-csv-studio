@@ -6,7 +6,7 @@ import { FILTER_LABELS, type Filter, type Sort, type ViewSpec } from '../../src/
 import type { HostMessage, Meta, RowData, SavedQuery, SqlFunctionInfo, ToolCommand, UserTransformInfo } from '../../src/shared/messages';
 import { ExportDialog } from './components/ExportDialog';
 import { FilterPopover } from './components/FilterPopover';
-import { Grid, type CellRef, type GridData, type GridLayout } from './components/Grid';
+import { Grid, rangeSize, type CellRange, type CellRef, type GridData, type GridLayout } from './components/Grid';
 import { useMenu, type MenuItem } from './components/Menu';
 import { ProfilePanel } from './components/ProfilePanel';
 import { PromptDialog } from './components/PromptDialog';
@@ -35,7 +35,8 @@ export function App() {
   const [sqlOpen, setSqlOpen] = useState(persisted.sqlOpen ?? false);
   const [sqlHeight, setSqlHeight] = useState(persisted.sqlHeight ?? 320);
   const [profileCol, setProfileCol] = useState<number | null>(null);
-  const [transformCol, setTransformCol] = useState<number | null>(null);
+  const [transform, setTransform] = useState<{ cols: number[]; preset?: string } | null>(null);
+  const [range, setRange] = useState<CellRange | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [filterAt, setFilterAt] = useState<{ col: number; rect: DOMRect } | null>(null);
   const [prompt, setPrompt] = useState<{ title: string; initial: string; onOk: (v: string) => void } | null>(null);
@@ -154,7 +155,18 @@ export function App() {
   const copyRows = (rowNums: number[]) =>
     post({ type: 'export', request: { source: 'rows', rows: [...rowNums].sort((a, b) => a - b), columns: visibleColumns, target: 'copy', format: 'tsv' } });
 
+  /** Copies a cell block as TSV (pastes into Excel/Sheets as cells), via the host so unloaded rows are included. */
+  const copyRange = (r: CellRange, header = false) =>
+    post({ type: 'export', request: { source: 'view', viewRange: [r.start, r.end], columns: r.cols, target: 'copy', format: 'tsv', options: { header } } });
+
+  const multiRange = rangeSize(range) > 1 ? range : null;
+  const inRange = (cell: CellRef) => !!multiRange && cell.viewIndex >= multiRange.start && cell.viewIndex <= multiRange.end && multiRange.cols.includes(cell.col);
+  const clearRange = (r: CellRange) => post({ type: 'clearRange', start: r.start, end: r.end, cols: r.cols });
+  /** Columns to preselect in the transform dialog: the selected block's, else the active cell's. */
+  const transformTargets = () => (multiRange && multiRange.cols.length > 1 ? multiRange.cols : [Math.max(0, cursor.current.cell.col)]);
+
   const onCopy = () => {
+    if (multiRange) return copyRange(multiRange);
     if (selectedRows.size) return copyRows([...selectedRows]);
     const { cell, row } = cursor.current;
     if (row) post({ type: 'copy', text: row.cells[cell.col] ?? '', label: 'cell' });
@@ -171,7 +183,7 @@ export function App() {
       { label: 'Add to sort', hint: 'Shift+click', onClick: () => sortBy(col, true) },
       { label: 'Filter…', onClick: () => setFilterAt({ col, rect: (e.target as HTMLElement).getBoundingClientRect() }) },
       { label: 'Profile column', onClick: () => setProfileCol(col) },
-      { label: 'Transform…', hint: 'decrypt, mask, regex…', onClick: () => setTransformCol(col) },
+      { label: 'Transform…', hint: 'decrypt, mask, regex…', onClick: () => setTransform({ cols: [col] }) },
       'separator',
       { label: 'Hide column', onClick: () => setLayout({ hidden: new Set([...layout.hidden, c.name]) }) },
       { label: layout.frozen === visibleColumns.indexOf(col) + 1 ? 'Unfreeze columns' : 'Freeze up to this column', onClick: () => setLayout({ frozen: layout.frozen === visibleColumns.indexOf(col) + 1 ? 0 : visibleColumns.indexOf(col) + 1 }) },
@@ -200,6 +212,8 @@ export function App() {
       { section: `Type of ${c.name}` },
       { label: `${!c.overridden ? '✓ ' : ''}Auto (detected: ${c.inferred}, ${Math.round(c.confidence * 100)}%)`, onClick: () => post({ type: 'setType', col, colType: null }) },
       ...COL_TYPES.map((t: ColType) => ({ label: `${c.overridden && c.type === t ? '✓ ' : ''}${t}`, onClick: () => post({ type: 'setType', col, colType: t }) })),
+      'separator',
+      { label: 'Convert values to datetime…', hint: 'transform', onClick: () => setTransform({ cols: [col], preset: 'to-datetime' }) },
     ]);
   };
 
@@ -207,6 +221,18 @@ export function App() {
     const rowsForAction = selectedRows.has(row.row) && selectedRows.size > 1 ? [...selectedRows] : [row.row];
     const n = rowsForAction.length;
     const items: MenuItem[] = [];
+    if (multiRange && inRange(cell)) {
+      const r = multiRange;
+      const nRows = r.end - r.start + 1;
+      items.push(
+        { section: `Selection · ${nRows.toLocaleString()} × ${r.cols.length} cells` },
+        { label: 'Copy selection', hint: '⌘C', onClick: () => copyRange(r) },
+        { label: 'Copy selection with headers', onClick: () => copyRange(r, true) },
+        { label: r.cols.length > 1 ? `Transform ${r.cols.length} columns…` : 'Transform column…', onClick: () => setTransform({ cols: r.cols }) },
+      );
+      if (!meta.readOnly && r.cols.some((c) => !isVirtual(c))) items.push({ label: 'Clear selected cells', hint: 'Del', danger: true, onClick: () => clearRange(r) });
+      return openMenu(e, items);
+    }
     if (cell.col >= 0) {
       const v = row.cells[cell.col] ?? '';
       const c = cols[cell.col];
@@ -221,7 +247,7 @@ export function App() {
         items.push({ label: `Filter: ${c.name} ≥ ${v}`, onClick: () => setColumnFilters(cell.col, [{ col: cell.col, op: 'gte', value: v }]) });
         items.push({ label: `Filter: ${c.name} ≤ ${v}`, onClick: () => setColumnFilters(cell.col, [{ col: cell.col, op: 'lte', value: v }]) });
       }
-      items.push({ label: 'Transform column…', onClick: () => setTransformCol(cell.col) }, { label: 'Profile column', onClick: () => setProfileCol(cell.col) });
+      items.push({ label: 'Transform column…', onClick: () => setTransform({ cols: [cell.col] }) }, { label: 'Profile column', onClick: () => setProfileCol(cell.col) });
       if (!meta.readOnly && !isVirtual(cell.col)) items.push({ label: 'Clear cell', hint: 'Del', onClick: () => edit({ type: 'edit', op: { kind: 'setCell', row: row.row, col: cell.col, value: '' } }) });
       items.push({ label: 'Show in text editor', onClick: () => post({ type: 'reveal', row: row.row, col: cell.col }) });
     } else items.push({ section: `Row ${row.row + 1}` });
@@ -312,6 +338,12 @@ export function App() {
               · {selectedRows.size} selected ✕
             </button>
           )}
+          {multiRange && (
+            <span title="Selected cells — ⌘C copies them, right-click for more">
+              {' '}
+              · {(multiRange.end - multiRange.start + 1).toLocaleString()} × {multiRange.cols.length} cells
+            </span>
+          )}
         </span>
         <button className="chip" onClick={dialectMenu} title="How the file is read">
           {delimiterName(meta.dialect.delimiter)} · {meta.hasHeader ? 'header' : 'no header'} · {meta.dialect.eol === '\r\n' ? 'CRLF' : 'LF'}
@@ -329,7 +361,7 @@ export function App() {
         >
           SQL
         </button>
-        <button className="btn" onClick={() => setTransformCol(cursor.current.cell.col >= 0 ? cursor.current.cell.col : 0)} title="Decrypt, mask, reformat… a column">
+        <button className="btn" onClick={() => setTransform({ cols: transformTargets() })} title="Decrypt, mask, reformat… columns (uses the selected columns)">
           Transform
         </button>
         <button className={`btn${profileCol !== null ? ' on' : ''}`} onClick={() => setProfileCol(profileCol === null ? Math.max(0, cursor.current.cell.col) : null)} title="Column statistics">
@@ -403,6 +435,8 @@ export function App() {
             selectedRows={selectedRows}
             setSelectedRows={setSelectedRows}
             onCopy={onCopy}
+            onClearRange={() => multiRange && clearRange(multiRange)}
+            onRange={(r) => setRange((prev) => (prev && prev.start === r.start && prev.end === r.end && prev.cols.join() === r.cols.join() ? prev : r))}
             scrollTo={scrollTo}
           />
           {sqlOpen && (
@@ -462,8 +496,17 @@ export function App() {
           onClose={() => setFilterAt(null)}
         />
       )}
-      {transformCol !== null && (
-        <TransformDialog meta={meta} col={transformCol} presets={transforms.presets} user={transforms.user} secrets={transforms.secrets} filtered={filtered} onClose={() => setTransformCol(null)} />
+      {transform && (
+        <TransformDialog
+          meta={meta}
+          cols={transform.cols}
+          initialPreset={transform.preset}
+          presets={transforms.presets}
+          user={transforms.user}
+          secrets={transforms.secrets}
+          filtered={filtered}
+          onClose={() => setTransform(null)}
+        />
       )}
       {exportOpen && <ExportDialog meta={meta} selectedRows={[...selectedRows].sort((a, b) => a - b)} visibleColumns={visibleColumns} onClose={() => setExportOpen(false)} />}
       {prompt && (

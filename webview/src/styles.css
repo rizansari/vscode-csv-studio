@@ -522,6 +522,14 @@ input[type='radio'] {
   box-shadow: 2px 0 0 var(--border);
 }
 
+.grid-row .td.in-range {
+  background: color-mix(in srgb, var(--focus) 18%, var(--bg));
+}
+
+.grid-scroll {
+  user-select: none;
+}
+
 .td.cursor {
   outline: 1px solid var(--focus);
   outline-offset: -1px;
@@ -921,6 +929,50 @@ input[type='radio'] {
 
 .form-grid > label:not(.check) {
   color: var(--muted);
+}
+
+.col-picker {
+  min-width: 0;
+}
+
+.col-picker-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 2px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.col-picker-summary > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow: auto;
+  margin-top: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+}
+
+.col-picker-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.inline-select {
+  padding: 0 4px;
 }
 
 .radio-row {

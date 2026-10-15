@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { fieldRanges } from '../../core/csv/parse';
 import { applyEdit, type CsvEditOp } from '../../core/edit';
 import { presetInfo, PRESETS } from '../../core/transforms/presets';
-import { runTransform } from '../../core/transforms/run';
+import { runTransform, type TransformOutput } from '../../core/transforms/run';
 import type { TransformSpec } from '../../core/transforms/types';
 import { recordIndex } from '../../core/table';
 import type { ColType } from '../../core/types';
@@ -200,6 +200,13 @@ export class CsvStudioEditor implements vscode.CustomTextEditorProvider, vscode.
           await this.edit(panel, { kind: 'reorderRows', order: session.view });
           session.setView({ ...session.viewSpec, sorts: [] });
           break;
+        case 'clearRange': {
+          const width = session.table.columns.length;
+          const cols = m.cols.filter((c) => c < width);
+          const cells = Array.from(session.view.subarray(m.start, m.end + 1)).flatMap((row) => cols.filter((col) => session.table.rows[row][col]).map((col) => ({ row, col, value: '' })));
+          if (cells.length) await this.edit(panel, { kind: 'setCells', cells });
+          break;
+        }
         case 'setType':
           session.setType(m.col, m.colType);
           await this.context.workspaceState.update(typesKey, session.typeOverrides);
@@ -283,7 +290,7 @@ export class CsvStudioEditor implements vscode.CustomTextEditorProvider, vscode.
     }
     const all = session.columnNames;
     const cols = req.columns?.length ? req.columns : all.map((_, i) => i);
-    const rowNums = req.source === 'rows' && req.rows ? req.rows : Array.from(session.view);
+    const rowNums = req.source === 'rows' && req.rows ? req.rows : Array.from(req.viewRange ? session.view.subarray(req.viewRange[0], req.viewRange[1] + 1) : session.view);
     const width = session.table.columns.length;
     const rows = rowNums.map((r) => cols.map((c) => (c < width ? (session.table.rows[r][c] ?? '') : (session.virtual[c - width]?.values[r] ?? ''))));
     return { columns: cols.map((c) => all[c]), rows };
@@ -305,28 +312,47 @@ export class CsvStudioEditor implements vscode.CustomTextEditorProvider, vscode.
 
   private async applyTransform(panel: Panel, spec: TransformSpec) {
     const { session } = panel;
+    const cols = spec.cols?.length ? [...new Set(spec.cols)] : [spec.col];
+    const width = session.table.columns.length;
+    if (spec.target === 'inPlace' && cols.some((c) => c >= width)) throw new Error('Virtual columns cannot be changed in place');
     const rows = spec.onlyView ? Array.from(session.view).sort((a, b) => a - b) : session.table.rows.map((_, i) => i);
-    panel.post({ type: 'busy', label: `Transforming ${rows.length.toLocaleString()} rows…` });
-    const out = await this.transform(panel, spec, rows);
-    const name = spec.newName?.trim() || `${session.columnNames[spec.col]}_${spec.id}`;
+    panel.post({ type: 'busy', label: `Transforming ${rows.length.toLocaleString()} rows${cols.length > 1 ? ` × ${cols.length} columns` : ''}…` });
+    // Every column runs against the original rows, so the results never depend on column order.
+    const outs: { col: number; out: TransformOutput }[] = [];
+    for (const col of cols) outs.push({ col, out: await this.transform(panel, { ...spec, col }, rows) });
+    const nameFor = (col: number) =>
+      cols.length === 1 && spec.newName?.trim() ? spec.newName.trim() : `${session.columnNames[col]}${cols.length > 1 && spec.nameSuffix?.trim() ? spec.nameSuffix.trim() : `_${spec.id}`}`;
+
     if (spec.target === 'virtual') {
-      const values = session.table.rows.map((r) => r[spec.col] ?? '');
-      for (const r of out.results) values[r.row] = r.after;
-      session.addVirtual(name, values);
+      // Build every column before adding any: adding one can replace (and shift) existing virtual columns.
+      const base = session.allRows();
+      const added = outs.map(({ col, out }) => {
+        const values = base.map((r) => r[col] ?? '');
+        for (const r of out.results) values[r.row] = r.after;
+        return { name: nameFor(col), values };
+      });
+      for (const v of added) session.addVirtual(v.name, v.values);
       panel.sendMeta();
     } else if (spec.target === 'newColumn') {
-      const values = session.table.rows.map(() => '');
-      for (const r of out.results) values[r.row] = r.after;
-      await this.edit(panel, { kind: 'addColumn', name, at: spec.col + 1, values });
+      const columns = outs.map(({ col, out }) => {
+        const values = session.table.rows.map(() => '');
+        for (const r of out.results) values[r.row] = r.after;
+        // A virtual source column has no place in the file: append its result at the end.
+        return { name: nameFor(col), at: Math.min(col + 1, width), values };
+      });
+      await this.edit(panel, { kind: 'addColumns', columns });
     } else {
-      if (spec.col >= session.table.columns.length) throw new Error('Virtual columns cannot be changed in place');
-      const cells = out.results.filter((r) => r.after !== r.before).map((r) => ({ row: r.row, col: spec.col, value: r.after }));
+      const cells = outs.flatMap(({ col, out }) => out.results.filter((r) => r.after !== r.before).map((r) => ({ row: r.row, col, value: r.after })));
       if (cells.length) await this.edit(panel, { kind: 'setCells', cells });
     }
-    const msg = `Transformed ${out.results.length.toLocaleString()} value(s)` + (out.errors ? `; ${out.errors} failed and were left unchanged` : '');
-    if (out.errors) {
-      const first = out.results.find((r) => r.error);
-      vscode.window.showWarningMessage(`CSV Studio: ${msg}. First error (row ${first!.row + 1}): ${first!.error}`);
+
+    const total = outs.reduce((s, o) => s + o.out.results.length, 0);
+    const errors = outs.reduce((s, o) => s + o.out.errors, 0);
+    const msg = `Transformed ${total.toLocaleString()} value(s)` + (errors ? `; ${errors} failed and were left unchanged` : '');
+    if (errors) {
+      const { col, out } = outs.find((o) => o.out.errors)!;
+      const first = out.results.find((r) => r.error)!;
+      vscode.window.showWarningMessage(`CSV Studio: ${msg}. First error (${session.columnNames[col]}, row ${first.row + 1}): ${first.error}`);
     } else vscode.window.setStatusBarMessage(`$(check) ${msg}`, 4000);
   }
 

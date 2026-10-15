@@ -36,6 +36,17 @@ export interface CellRef {
   col: number;
 }
 
+/** A rectangular block of selected cells, in view order. */
+export interface CellRange {
+  /** First and last view positions (inclusive). */
+  start: number;
+  end: number;
+  /** File column indexes, in display order. */
+  cols: number[];
+}
+
+export const rangeSize = (r: CellRange | null) => (r ? (r.end - r.start + 1) * r.cols.length : 0);
+
 interface Props {
   data: GridData;
   layout: GridLayout;
@@ -54,6 +65,10 @@ interface Props {
   selectedRows?: Set<number>;
   setSelectedRows?: (s: Set<number>) => void;
   onCopy?: () => void;
+  /** Delete/Backspace while several cells are selected. */
+  onClearRange?: () => void;
+  /** Called whenever the selected cell block changes (a single cell counts too). */
+  onRange?: (range: CellRange) => void;
   scrollTo?: { viewIndex: number; col?: number; n: number } | null;
 }
 
@@ -69,8 +84,11 @@ function defaultWidth(c: GridColumn): number {
 export function Grid(p: Props) {
   const { data, layout } = p;
   const scrollRef = useRef<HTMLDivElement>(null);
+  // `cursor` is the active cell (the range anchor, as in Excel); `focus` is the other corner.
   const [cursor, setCursor] = useState<CellRef>({ viewIndex: 0, col: 0 });
+  const [focus, setFocus] = useState<CellRef>({ viewIndex: 0, col: 0 });
   const [editing, setEditing] = useState<CellRef | null>(null);
+  const dragging = useRef(false);
   const anchorRow = useRef<number | null>(null);
   const dragCol = useRef<string | null>(null);
   const rowHeight = layout.wrap ? 58 : 26;
@@ -101,41 +119,87 @@ export function Grid(p: Props) {
     if (!p.scrollTo || p.scrollTo.viewIndex < 0) return;
     virtualizer.scrollToIndex(p.scrollTo.viewIndex, { align: 'center' });
     const col = p.scrollTo.col !== undefined ? cols.findIndex((c) => c.index === p.scrollTo!.col) : cursor.col;
-    setCursor({ viewIndex: p.scrollTo.viewIndex, col: Math.max(0, col) });
+    const next = { viewIndex: p.scrollTo.viewIndex, col: Math.max(0, col) };
+    setCursor(next);
+    setFocus(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [p.scrollTo?.n]);
 
-  const move = (viewIndex: number, col: number) => {
-    const next = { viewIndex: Math.max(0, Math.min(data.count - 1, viewIndex)), col: Math.max(0, Math.min(cols.length - 1, col)) };
-    setCursor(next);
+  // Selected block, in display positions.
+  const sel = {
+    r1: Math.min(cursor.viewIndex, focus.viewIndex),
+    r2: Math.max(cursor.viewIndex, focus.viewIndex),
+    c1: Math.min(cursor.col, focus.col),
+    c2: Math.max(cursor.col, focus.col),
+  };
+  const multi = sel.r1 !== sel.r2 || sel.c1 !== sel.c2;
+  const inSel = (viewIndex: number, col: number) => viewIndex >= sel.r1 && viewIndex <= sel.r2 && col >= sel.c1 && col <= sel.c2;
+
+  const rangeCols = cols.slice(sel.c1, sel.c2 + 1).map((c) => c.index).join(',');
+  useEffect(() => {
+    if (!data.count) return;
+    p.onRange?.({ start: sel.r1, end: Math.min(sel.r2, data.count - 1), cols: rangeCols ? rangeCols.split(',').map(Number) : [] });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel.r1, sel.r2, rangeCols, data.count]);
+
+  const clamp = (viewIndex: number, col: number): CellRef => ({ viewIndex: Math.max(0, Math.min(data.count - 1, viewIndex)), col: Math.max(0, Math.min(cols.length - 1, col)) });
+
+  /** Moves the active cell (collapsing the selection), or with `extend` moves only the far corner. */
+  const move = (viewIndex: number, col: number, extend = false) => {
+    const next = clamp(viewIndex, col);
+    setFocus(next);
     virtualizer.scrollToIndex(next.viewIndex, { align: 'auto' });
+    if (extend) return;
+    setCursor(next);
     p.onCursor?.({ viewIndex: next.viewIndex, col: cols[next.col]?.index ?? 0 }, data.getRow(next.viewIndex));
+  };
+
+  const selectAll = () => {
+    if (!data.count || !cols.length) return;
+    setCursor({ viewIndex: 0, col: 0 });
+    setFocus({ viewIndex: data.count - 1, col: cols.length - 1 });
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (editing || (e.target as HTMLElement).tagName === 'INPUT') return;
     const row = data.getRow(cursor.viewIndex);
     const col = cols[cursor.col];
+    const mod = e.metaKey || e.ctrlKey;
+    // Shift+navigation grows the selection from the active cell; plain navigation moves it.
+    const ext = e.shiftKey;
+    const from = ext ? focus : cursor;
     switch (e.key) {
-      case 'ArrowDown': move(cursor.viewIndex + 1, cursor.col); break;
-      case 'ArrowUp': move(cursor.viewIndex - 1, cursor.col); break;
-      case 'ArrowRight': move(cursor.viewIndex, cursor.col + 1); break;
-      case 'ArrowLeft': move(cursor.viewIndex, cursor.col - 1); break;
+      case 'ArrowDown': move(mod ? data.count - 1 : from.viewIndex + 1, from.col, ext); break;
+      case 'ArrowUp': move(mod ? 0 : from.viewIndex - 1, from.col, ext); break;
+      case 'ArrowRight': move(from.viewIndex, mod ? cols.length - 1 : from.col + 1, ext); break;
+      case 'ArrowLeft': move(from.viewIndex, mod ? 0 : from.col - 1, ext); break;
       case 'Tab': move(cursor.viewIndex, cursor.col + (e.shiftKey ? -1 : 1)); break;
-      case 'PageDown': move(cursor.viewIndex + 25, cursor.col); break;
-      case 'PageUp': move(cursor.viewIndex - 25, cursor.col); break;
-      case 'Home': move(e.metaKey || e.ctrlKey ? 0 : cursor.viewIndex, 0); break;
-      case 'End': move(e.metaKey || e.ctrlKey ? data.count - 1 : cursor.viewIndex, cols.length - 1); break;
+      case 'PageDown': move(from.viewIndex + 25, from.col, ext); break;
+      case 'PageUp': move(from.viewIndex - 25, from.col, ext); break;
+      case 'Home': move(mod ? 0 : from.viewIndex, 0, ext); break;
+      case 'End': move(mod ? data.count - 1 : from.viewIndex, cols.length - 1, ext); break;
+      case 'Escape':
+        if (!multi) return;
+        setFocus(cursor);
+        break;
       case 'Enter':
       case 'F2':
         if (!p.readOnly && row && col && !col.virtual) setEditing({ viewIndex: cursor.viewIndex, col: cursor.col });
         break;
       case 'Delete':
       case 'Backspace':
-        if (!p.readOnly && row && col && !col.virtual && row.cells[col.index]) p.onEdit?.(row.row, col.index, '');
+        if (p.readOnly) break;
+        if (multi) p.onClearRange?.();
+        else if (row && col && !col.virtual && row.cells[col.index]) p.onEdit?.(row.row, col.index, '');
+        break;
+      case 'a':
+      case 'A':
+        if (!mod) return;
+        selectAll();
         break;
       case 'c':
-        if (e.metaKey || e.ctrlKey) {
+      case 'C':
+        if (mod) {
           if (window.getSelection()?.toString()) return;
           p.onCopy?.();
         } else return;
@@ -144,6 +208,22 @@ export function Grid(p: Props) {
         return;
     }
     e.preventDefault();
+  };
+
+  useEffect(() => {
+    const up = () => (dragging.current = false);
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, []);
+
+  const cellMouseDown = (e: MouseEvent, viewIndex: number, col: number) => {
+    if (e.button !== 0) return;
+    // Keep the browser from starting a text selection; the grid draws its own.
+    e.preventDefault();
+    scrollRef.current?.focus({ preventScroll: true });
+    if (e.shiftKey) move(viewIndex, col, true);
+    else move(viewIndex, col);
+    dragging.current = true;
   };
 
   const clickRowNumber = (e: MouseEvent, row: RowData, viewIndex: number) => {
@@ -202,7 +282,9 @@ export function Grid(p: Props) {
     <div className="grid-scroll" ref={scrollRef} tabIndex={0} onKeyDown={onKeyDown}>
       <div className="grid" style={{ width: totalWidth }}>
         <div className="grid-head" style={{ gridTemplateColumns: template }}>
-          <div className="th index sticky-index">#</div>
+          <div className="th index sticky-index" title="Select all cells (⌘A / Ctrl+A)" onClick={selectAll}>
+            #
+          </div>
           {cols.map((c, i) => {
             const s = sortInfo(c);
             return (
@@ -280,19 +362,22 @@ export function Grid(p: Props) {
                   const v = row?.cells[c.index] ?? '';
                   const isCursor = cursor.viewIndex === vi.index && cursor.col === ci;
                   const isEditing = editing?.viewIndex === vi.index && editing.col === ci;
+                  const inRange = multi && inSel(vi.index, ci);
                   const invalid = c.invalidCheck !== false && c.type && v.trim() !== '' && c.type.type !== 'string' && !matches(c.type.type, v, c.type);
                   const numeric = c.type && NUMERIC.includes(c.type.type);
                   return (
                     <div
                       key={c.name}
-                      className={`td${numeric ? ' num' : ''}${isCursor ? ' cursor' : ''}${invalid ? ' invalid' : ''}${v === '' ? ' empty' : ''}${frozenEdge(ci, frozen)}`}
+                      className={`td${numeric ? ' num' : ''}${isCursor ? ' cursor' : ''}${inRange ? ' in-range' : ''}${invalid ? ' invalid' : ''}${v === '' ? ' empty' : ''}${frozenEdge(ci, frozen)}`}
                       style={stickyStyle(ci)}
                       title={invalid ? `Not a valid ${c.type!.type}` : v.length > 40 ? v : undefined}
-                      onClick={() => move(vi.index, ci)}
+                      onMouseDown={(e) => !isEditing && cellMouseDown(e, vi.index, ci)}
+                      onMouseEnter={() => dragging.current && move(vi.index, ci, true)}
                       onDoubleClick={() => !p.readOnly && !c.virtual && row && setEditing({ viewIndex: vi.index, col: ci })}
                       onContextMenu={(e) => {
                         e.preventDefault();
-                        move(vi.index, ci);
+                        // Right-clicking inside the selection keeps it, like a spreadsheet.
+                        if (!inRange) move(vi.index, ci);
                         if (row) p.onCellMenu?.({ viewIndex: vi.index, col: c.index }, row, e);
                       }}
                     >

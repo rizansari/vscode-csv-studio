@@ -20,11 +20,12 @@ CSV Studio edits the real file. A cell edit rewrites only that field, so the res
 - A virtualized grid that stays smooth with hundreds of thousands of rows. Columns can be resized, dragged to reorder, hidden and frozen, and long text can wrap.
 - **Column types are detected automatically:**
   - Numbers: integer, decimal (including `1.234,5`), percent, currency.
-  - Dates: dates (ISO, `dd/mm/yyyy` and `mm/dd/yyyy` are told apart automatically) and datetimes.
+  - Dates: dates (ISO, `dd/mm/yyyy` and `mm/dd/yyyy` are told apart automatically) and datetimes, including log/database styles like `2024-10-30 07:56:43.972 +0300`.
   - Other: boolean, email, URL, UUID, JSON.
 - Click a type badge to override it. Overrides are remembered per file.
 - Types control sorting, filters and alignment, and how values are stored in SQL. Cells that don't match their column's type are underlined in red.
 - Values with leading zeros (`007`) and numbers with more than 15 digits (card numbers, long IDs) are kept as text, so they never lose data.
+- **Select cells like a spreadsheet:** drag, Shift+click or Shift+arrow keys to select a block, ⌘A / Ctrl+A (or click `#`) for everything. ⌘C / Ctrl+C copies the block as TSV, ready to paste into Excel or Google Sheets. Right-click the block to copy it with headers, clear it, or transform its columns.
 - The delimiter, header row, BOM and line endings are detected automatically. The chip in the toolbar lets you read the file differently, for example with no header row or a semicolon delimiter.
 
 ### Filter, sort and search
@@ -69,10 +70,12 @@ ORDER BY revenue DESC
 - **Encoding:** UTF-8, UTF-8 with BOM (Excel-friendly), UTF-16 or Windows-1252.
 
 ### Column transforms, including decryption
-Open **Transform** from the toolbar, a column header or a cell. Pick a column and a transform, and see a **live preview of 50 rows before and after**, including any per-row errors. Then write the result:
+Open **Transform** from the toolbar, a column header or a cell. Pick one or more columns and a transform, and see a **live preview of 50 rows before and after**, including any per-row errors. Then write the result:
 - **Virtual column:** shown in the grid and usable in SQL, but **never written to the file**. Ideal for decrypted data.
 - **New column** next to the source column.
 - **Replace values** in place (⌘Z undoes it).
+
+To transform several columns at once, tick them in the column picker, or select cells across those columns first and then click **Transform**. Each column is transformed on its own; new and virtual columns are named `<column><suffix>`, and an in-place change across columns is a single undo step.
 
 ![The Transform dialog previewing AES-GCM decryption of a card column](images/screenshots/transform.png)
 
@@ -81,7 +84,7 @@ Open **Transform** from the toolbar, a column header or a cell. Pick a column an
 | Crypto | **AES decrypt / encrypt** (GCM, CBC, CTR, ECB; key as hex, base64, UTF-8 or passphrase; IV taken from the start of the value, from another column, or a fixed value; GCM tag position and AAD), **Fernet decrypt**, hash and HMAC |
 | Encoding | Base64, hex, URL encode/decode, gunzip/gzip + base64, **JWT decode** (payload, header or a single claim) |
 | Text | Trim, case, find & replace, regex replace/extract, **mask** (`************1234`), combine columns with a template |
-| Values | Reformat dates (auto-detects d/m/y, m/d/y, epoch), reformat numbers, fill down, default for empty cells |
+| Values | **Convert to datetime** (also from the type badge menu), reformat dates (auto-detects d/m/y, m/d/y, epoch, zone offsets; `SSS` and `Z` tokens; output in UTC or the value's own offset), reformat numbers, fill down, default for empty cells |
 
 **Keys and passwords:** run **CSV Studio: Set Secret…**. Secrets are stored in your OS keychain through VS Code's SecretStorage. They are never written to settings or files, and transforms refer to them only by name.
 

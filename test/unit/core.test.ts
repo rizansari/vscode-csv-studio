@@ -13,7 +13,7 @@ import { loadTable } from '../../src/core/table';
 import { aesDecrypt, aesEncrypt, deriveKey, fernetDecrypt, findPreset } from '../../src/core/transforms/presets';
 import { runTransform } from '../../src/core/transforms/run';
 import { compileUserTransform } from '../../src/core/transforms/sandbox';
-import { inferType, toNumber, toSqlValue } from '../../src/core/types';
+import { inferType, parseDateTime, toNumber, toSqlValue } from '../../src/core/types';
 import { computeView } from '../../src/core/view';
 
 const SAMPLE = 'id,name,price,joined,active\n1,"Smith, Ann",9.50,2024-01-05,true\n2,"Bob ""B""",12,2023-12-31,false\n3,Cara,,2024-02-29,yes\n';
@@ -86,6 +86,21 @@ describe('types', () => {
     expect(toNumber('$1,200', { type: 'currency', confidence: 1 })).toBe(1200);
     expect(toSqlValue('25/12/2024', { type: 'date', confidence: 1, dateOrder: 'dmy' })).toBe('2024-12-25');
   });
+  it('reads date-times with a spaced, colon-less zone offset', () => {
+    const v = '2024-10-30 07:56:43.972 +0300';
+    expect(inferType([v, '2024-10-31 18:00:01.005 +0300']).type).toBe('datetime');
+    expect(parseDateTime(v)).toBe(Date.UTC(2024, 9, 30, 4, 56, 43, 972));
+    expect(parseDateTime('2024-10-30T07:56:43-05:30')).toBe(Date.UTC(2024, 9, 30, 13, 26, 43));
+    expect(parseDateTime('2024-10-30 07:56 UTC')).toBe(Date.UTC(2024, 9, 30, 7, 56));
+    expect(parseDateTime('2024-02-30 07:56:43')).toBeNull();
+    expect(parseDateTime('2024-10-30 25:00:00')).toBeNull();
+    const dt = { type: 'datetime' as const, confidence: 1 };
+    expect(toNumber(v, dt)).toBe(Date.UTC(2024, 9, 30, 4, 56, 43, 972));
+    // SQLite's date functions need "+03:00"; already-valid values are left untouched.
+    expect(toSqlValue(v, dt)).toBe('2024-10-30 07:56:43.972+03:00');
+    expect(toSqlValue('2024-10-30 07:56:43 UTC', dt)).toBe('2024-10-30 07:56:43Z');
+    expect(toSqlValue('2024-10-30T07:56:43+03:00', dt)).toBe('2024-10-30T07:56:43+03:00');
+  });
 });
 
 describe('view', () => {
@@ -122,6 +137,16 @@ describe('edit', () => {
   });
   it('adds, deletes, renames and moves columns', () => {
     expect(applyEdit(text, t, { kind: 'addColumn', name: 'age', values: ['30', ''] })).toBe('id,name,age\r\n1,"Smith, Ann",30\r\n2,Bob,\r\n');
+    expect(
+      applyEdit(text, t, {
+        kind: 'addColumns',
+        columns: [
+          { name: 'id2', at: 1, values: ['a', 'b'] },
+          { name: 'name2', at: 2, values: ['c', 'd'] },
+          { name: 'x', at: 2 },
+        ],
+      }),
+    ).toBe('id,id2,name,name2,x\r\n1,a,"Smith, Ann",c,\r\n2,b,Bob,d,\r\n');
     expect(applyEdit(text, t, { kind: 'deleteColumn', col: 0 })).toBe('name\r\n"Smith, Ann"\r\nBob\r\n');
     expect(applyEdit(text, t, { kind: 'renameColumn', col: 1, name: 'full name' })).toBe('id,full name\r\n1,"Smith, Ann"\r\n2,Bob\r\n');
     expect(applyEdit(text, t, { kind: 'moveColumn', from: 1, to: 0 })).toBe('name,id\r\n"Smith, Ann",1\r\nBob,2\r\n');
@@ -204,6 +229,14 @@ describe('crypto presets', () => {
     expect(run('template', 'x', { template: '{first} {last} ({value})' })).toBe('Ann Lee (x)');
     expect(run('date-format', '25/12/2024', { inputOrder: 'auto', format: 'YYYY-MM-DD' })).toBe('2024-12-25');
     expect(run('date-format', '1735084800', { format: 'iso' })).toBe('2024-12-25T00:00:00.000Z');
+    const dt = '2024-10-30 07:56:43.972 +0300';
+    expect(run('date-format', dt, { format: 'YYYY-MM-DD HH:mm:ss' })).toBe('2024-10-30 04:56:43');
+    expect(run('date-format', dt, { format: 'YYYY-MM-DD HH:mm:ss.SSS Z', zone: 'keep offset' })).toBe('2024-10-30 07:56:43.972 +03:00');
+    expect(run('to-datetime', dt, { format: 'iso', zone: 'keep offset' })).toBe('2024-10-30T07:56:43.972+03:00');
+    expect(run('to-datetime', dt, { format: 'iso', zone: 'UTC' })).toBe('2024-10-30T04:56:43.972Z');
+    expect(run('to-datetime', dt, { format: 'epoch-ms' })).toBe(String(Date.UTC(2024, 9, 30, 4, 56, 43, 972)));
+    expect(run('to-datetime', '25/12/2024', { format: 'YYYY-MM-DD HH:mm:ss', zone: 'UTC' })).toBe('2024-12-25 00:00:00');
+    expect(() => run('to-datetime', 'soon', {})).toThrow(/Unrecognised/);
     expect(run('number-format', '$1,234.567', { decimals: '2', thousands: ',' })).toBe('1,234.57');
     expect(run('hash', 'a', { algorithm: 'sha256' })).toBe('ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb');
   });

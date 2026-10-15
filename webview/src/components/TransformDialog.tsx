@@ -5,7 +5,10 @@ import { post, request } from '../vscode';
 
 interface Props {
   meta: Meta;
-  col: number;
+  /** Columns to transform (each one independently). */
+  cols: number[];
+  /** Transform to preselect, e.g. "to-datetime". */
+  initialPreset?: string;
   presets: TransformInfo[];
   user: UserTransformInfo[];
   secrets: string[];
@@ -15,19 +18,27 @@ interface Props {
 
 const USER_PREFIX = 'user:';
 
-export function TransformDialog({ meta, col: initialCol, presets, user, secrets, filtered, onClose }: Props) {
-  const [col, setCol] = useState(initialCol);
-  const [choice, setChoice] = useState(presets[0]?.id ?? '');
+export function TransformDialog({ meta, cols: initialCols, initialPreset, presets, user, secrets, filtered, onClose }: Props) {
+  const [cols, setCols] = useState<number[]>(initialCols.filter((c) => meta.columns[c]));
+  const [previewCol, setPreviewCol] = useState(cols[0] ?? 0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [choice, setChoice] = useState(initialPreset && presets.some((p) => p.id === initialPreset) ? initialPreset : (presets[0]?.id ?? ''));
   const [params, setParams] = useState<Record<string, string>>({});
   const [target, setTarget] = useState<TransformSpec['target']>('virtual');
   const [newName, setNewName] = useState('');
+  const [suffix, setSuffix] = useState('');
   const [onlyView, setOnlyView] = useState(false);
   const [preview, setPreview] = useState<{ rows: PreviewRow[]; errors: number } | null>(null);
   const [loading, setLoading] = useState(false);
 
   const isUser = choice.startsWith(USER_PREFIX);
   const info = isUser ? null : presets.find((p) => p.id === choice);
+  const multi = cols.length > 1;
+  const col = cols.includes(previewCol) ? previewCol : (cols[0] ?? 0);
   const colName = meta.columns[col]?.name ?? '';
+  const virtualPicked = cols.some((c) => meta.columns[c]?.virtual);
+
+  const toggleCol = (c: number) => setCols((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c].sort((a, b) => a - b)));
 
   useEffect(() => {
     setParams(Object.fromEntries((info?.params ?? []).filter((p) => p.default !== undefined).map((p) => [p.name, p.default!])));
@@ -50,28 +61,44 @@ export function TransformDialog({ meta, col: initialCol, presets, user, secrets,
 
   // Live preview, debounced.
   useEffect(() => {
-    if (missing.length || !choice) return setPreview(null);
+    if (missing.length || !choice || !cols.length) return setPreview(null);
     const t = setTimeout(() => void runPreview(), 350);
     return () => clearTimeout(t);
   }, [spec]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const groups = [...new Set(presets.map((p) => p.group))];
-  const suggestedName = `${colName}_${isUser ? choice.slice(USER_PREFIX.length) : choice.replace(/-/g, '_')}`;
+  const suggestedSuffix = `_${isUser ? choice.slice(USER_PREFIX.length) : choice.replace(/-/g, '_')}`;
+  const suggestedName = `${colName}${suggestedSuffix}`;
 
   return (
     <div className="dialog-backdrop" onMouseDown={onClose}>
       <div className="dialog transform-dialog" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="dialog-title">Transform column</div>
+        <div className="dialog-title">{multi ? `Transform ${cols.length} columns` : 'Transform column'}</div>
         <div className="form-grid">
-          <label>Column</label>
-          <select value={col} onChange={(e) => setCol(Number(e.target.value))}>
-            {meta.columns.map((c, i) => (
-              <option key={c.name} value={i}>
-                {c.name}
-                {c.virtual ? ' (virtual)' : ''}
-              </option>
-            ))}
-          </select>
+          <label>{multi ? 'Columns' : 'Column'}</label>
+          <div className="col-picker">
+            <button className="col-picker-summary" onClick={() => setPickerOpen(!pickerOpen)} title="Choose one or more columns">
+              <span>{cols.length ? cols.map((c) => meta.columns[c]?.name).join(', ') : 'Choose columns…'}</span> <span className="muted">{pickerOpen ? '▴' : '▾'}</span>
+            </button>
+            {pickerOpen && (
+              <div className="col-picker-list">
+                <div className="col-picker-actions">
+                  <button className="link" onClick={() => setCols(meta.columns.map((_, i) => i).filter((i) => !meta.columns[i].virtual))}>
+                    All
+                  </button>
+                  <button className="link" onClick={() => setCols([])}>
+                    None
+                  </button>
+                </div>
+                {meta.columns.map((c, i) => (
+                  <label key={c.name} className="check">
+                    <input type="checkbox" checked={cols.includes(i)} onChange={() => toggleCol(i)} /> {c.name}
+                    <span className="muted"> · {c.type}{c.virtual ? ' · virtual' : ''}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
 
           <label>Transform</label>
           <select value={choice} onChange={(e) => setChoice(e.target.value)}>
@@ -121,16 +148,22 @@ export function TransformDialog({ meta, col: initialCol, presets, user, secrets,
               ] as const
             ).map(([v, label, title]) => (
               <label key={v} className="check" title={title}>
-                <input type="radio" name="target" checked={target === v} disabled={meta.readOnly && v !== 'virtual'} onChange={() => setTarget(v)} /> {label}
+                <input type="radio" name="target" checked={target === v} disabled={(meta.readOnly && v !== 'virtual') || (v === 'inPlace' && virtualPicked)} onChange={() => setTarget(v)} /> {label}
               </label>
             ))}
           </div>
-          {target !== 'inPlace' && (
-            <>
-              <label>Column name</label>
-              <input value={newName} placeholder={suggestedName} onChange={(e) => setNewName(e.target.value)} />
-            </>
-          )}
+          {target !== 'inPlace' &&
+            (multi ? (
+              <>
+                <label>Name suffix</label>
+                <input value={suffix} placeholder={suggestedSuffix} title={`Each result is named <column>${suffix || suggestedSuffix}`} onChange={(e) => setSuffix(e.target.value)} />
+              </>
+            ) : (
+              <>
+                <label>Column name</label>
+                <input value={newName} placeholder={suggestedName} onChange={(e) => setNewName(e.target.value)} />
+              </>
+            ))}
           {filtered && (
             <>
               <span />
@@ -143,7 +176,21 @@ export function TransformDialog({ meta, col: initialCol, presets, user, secrets,
 
         <div className="preview">
           <div className="preview-head">
-            Preview (first {preview?.rows.length ?? 0} rows of the view){preview?.errors ? <span className="error-text"> · {preview.errors} error(s)</span> : null}
+            Preview (first {preview?.rows.length ?? 0} rows of the view)
+            {multi && (
+              <>
+                {' '}
+                for{' '}
+                <select className="inline-select" value={col} onChange={(e) => setPreviewCol(Number(e.target.value))}>
+                  {cols.map((c) => (
+                    <option key={c} value={c}>
+                      {meta.columns[c]?.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+            {preview?.errors ? <span className="error-text"> · {preview.errors} error(s)</span> : null}
             {loading && <span className="muted"> · running…</span>}
             {missing.length > 0 && <span className="muted"> · fill in: {missing.map((m) => m.label).join(', ')}</span>}
           </div>
@@ -178,13 +225,13 @@ export function TransformDialog({ meta, col: initialCol, presets, user, secrets,
           </button>
           <button
             className="btn primary"
-            disabled={!choice || missing.length > 0}
+            disabled={!choice || missing.length > 0 || !cols.length || (target === 'inPlace' && virtualPicked)}
             onClick={() => {
-              post({ type: 'transformApply', spec: { ...spec, newName: newName || suggestedName } });
+              post({ type: 'transformApply', spec: { ...spec, cols, newName: multi ? undefined : newName || suggestedName, nameSuffix: multi ? suffix || suggestedSuffix : undefined } });
               onClose();
             }}
           >
-            Apply to {onlyView ? meta.viewCount.toLocaleString() : meta.rowCount.toLocaleString()} rows
+            Apply to {onlyView ? meta.viewCount.toLocaleString() : meta.rowCount.toLocaleString()} rows{multi ? ` × ${cols.length} columns` : ''}
           </button>
         </div>
       </div>
