@@ -34,11 +34,16 @@ export interface TransformContext {
 
 export interface TransformSpec {
   col: number;
+  /** Apply to several columns at once (each runs independently); `col` is used when omitted. */
+  cols?: number[];
   kind: 'preset' | 'user';
   id: string;
   params: Record<string, string>;
   target: 'inPlace' | 'newColumn' | 'virtual';
+  /** Name of the result column (single column only). */
   newName?: string;
+  /** With several columns, each result is named `<column><suffix>`. */
+  nameSuffix?: string;
   /** Only rows visible in the current filtered view. */
   onlyView?: boolean;
 }

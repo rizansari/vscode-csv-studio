@@ -24,7 +24,8 @@ const RE = {
   boolean: /^(?:true|false|yes|no|y|n|t|f)$/i,
   dateYmd: /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/,
   dateOther: /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/,
-  datetime: /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/,
+  // Accepts ISO 8601 and common log/DB forms such as "2024-10-30 07:56:43.972 +0300" or "… UTC".
+  datetime: /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d{1,9}))?)?(\s?)(Z|UTC|GMT|[+-]\d{2}(?::?\d{2})?)?$/i,
   uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
   email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
   url: /^(?:https?|ftp):\/\/[^\s]+$/i,
@@ -68,7 +69,7 @@ export function matches(type: ColType, v: string, t: Partial<ColumnType> = {}): 
     case 'boolean':
       return RE.boolean.test(s);
     case 'datetime':
-      return RE.datetime.test(s) && !Number.isNaN(Date.parse(s.replace(' ', 'T')));
+      return parseDateTime(s) !== null;
     case 'date':
       return parseDate(s, t.dateOrder ?? 'ymd') !== null;
     case 'uuid':
@@ -134,6 +135,49 @@ export function parseDate(s: string, order: DateOrder): number | null {
   return validDate(y, m, d) ? Date.UTC(y, m - 1, d) : null;
 }
 
+/** Offset in minutes east of UTC; 0 for Z/UTC/GMT or no zone, null when out of range. */
+function zoneMinutes(zone: string | undefined): number | null {
+  if (!zone || /^(?:Z|UTC|GMT)$/i.test(zone)) return 0;
+  const m = /^([+-])(\d{2}):?(\d{2})?$/.exec(zone)!;
+  const h = +m[2];
+  const min = m[3] ? +m[3] : 0;
+  if (h > 14 || min > 59) return null;
+  return (m[1] === '-' ? -1 : 1) * (h * 60 + min);
+}
+
+/** Parses a date-time to epoch ms. Values without a zone are read as UTC (like plain dates). */
+export function parseDateTime(s: string): number | null {
+  const m = RE.datetime.exec(s.trim());
+  if (!m) return null;
+  const [y, mo, d, h, mi] = [+m[1], +m[2], +m[3], +m[4], +m[5]];
+  const sec = m[6] ? +m[6] : 0;
+  if (!validDate(y, mo, d) || h > 23 || mi > 59 || sec > 59) return null;
+  const off = zoneMinutes(m[9]);
+  if (off === null) return null;
+  const ms = m[7] ? Math.floor(Number(`0.${m[7]}`) * 1000) : 0;
+  return Date.UTC(y, mo - 1, d, h, mi, sec, ms) - off * 60_000;
+}
+
+/** The zone offset written in a date-time value, in minutes east of UTC (0 when none). */
+export function dateTimeOffset(s: string): number {
+  const m = RE.datetime.exec(s.trim());
+  return (m && zoneMinutes(m[9])) ?? 0;
+}
+
+/** Rewrites the zone suffix into a form SQLite's date functions accept ("+03:00", "Z"). */
+function sqliteDateTime(v: string): string {
+  const s = v.trim();
+  const m = RE.datetime.exec(s);
+  const zone = m?.[9];
+  if (!m || !zone || (!m[8] && /^(?:Z|[+-]\d{2}:\d{2})$/.test(zone))) return v;
+  const head = s.slice(0, s.length - m[8].length - zone.length);
+  const off = zoneMinutes(zone);
+  if (off === null) return v;
+  if (off === 0) return `${head}Z`;
+  const a = Math.abs(off);
+  return `${head}${off < 0 ? '-' : '+'}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
+}
+
 /**
  * Numeric value used for sorting, range filters and SQL: numbers as numbers, dates as epoch ms,
  * booleans as 1/0. Returns null for empty or non-matching values.
@@ -155,10 +199,8 @@ export function toNumber(v: string, t: ColumnType): number | null {
       return RE.boolean.test(s) ? (/^(?:true|yes|y|t)$/i.test(s) ? 1 : 0) : null;
     case 'date':
       return parseDate(s, t.dateOrder ?? 'ymd');
-    case 'datetime': {
-      const x = Date.parse(s.replace(' ', 'T'));
-      return Number.isNaN(x) ? null : x;
-    }
+    case 'datetime':
+      return parseDateTime(s);
     default:
       return null;
   }
@@ -175,7 +217,8 @@ export function toSqlValue(v: string, t: ColumnType): string | number | null {
     const ms = toNumber(v, t);
     return ms === null ? v : new Date(ms).toISOString().slice(0, 10);
   }
-  if (t.type === 'datetime' || t.type === 'string' || t.type === 'uuid' || t.type === 'email' || t.type === 'url' || t.type === 'json') return v;
+  if (t.type === 'datetime') return sqliteDateTime(v);
+  if (t.type === 'string' || t.type === 'uuid' || t.type === 'email' || t.type === 'url' || t.type === 'json') return v;
   const n = toNumber(v, t);
   return n === null ? v : n;
 }

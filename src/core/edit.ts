@@ -8,6 +8,8 @@ export type CsvEditOp =
   | { kind: 'insertRows'; at: number; rows: string[][] }
   | { kind: 'deleteRows'; rows: number[] }
   | { kind: 'addColumn'; name: string; at?: number; values?: string[] }
+  /** Several columns in one edit; each `at` refers to the column positions before the edit. */
+  | { kind: 'addColumns'; columns: { name: string; at: number; values?: string[] }[] }
   | { kind: 'deleteColumn'; col: number }
   | { kind: 'renameColumn'; col: number; name: string }
   | { kind: 'moveColumn'; from: number; to: number }
@@ -101,15 +103,19 @@ export function applyEdit(text: string, t: Table, op: CsvEditOp): string {
       }
       break;
     }
-    case 'addColumn': {
-      const at = op.at ?? t.columns.length;
+    case 'addColumn':
+    case 'addColumns': {
+      const added = op.kind === 'addColumn' ? [{ name: op.name, at: op.at ?? t.columns.length, values: op.values }] : op.columns;
+      // Insert right-to-left so earlier positions stay valid; equal positions keep their given order.
+      const order = added.map((c, i) => ({ ...c, i })).sort((a, b) => b.at - a.at || b.i - a.i);
       records.forEach((_, rec) => {
         const isHeader = !!t.rawHeader && rec === 0;
         const dataRow = t.rawHeader ? rec - 1 : rec;
-        const value = isHeader ? op.name : op.values?.[dataRow] ?? '';
         const fields = rawFields(rec);
-        while (fields.length < at) fields.push('');
-        fields.splice(at, 0, formatField(value, fmt));
+        for (const c of order) {
+          while (fields.length < c.at) fields.push('');
+          fields.splice(c.at, 0, formatField(isHeader ? c.name : c.values?.[dataRow] ?? '', fmt));
+        }
         splices.push({ start: starts[rec], end: ends[rec], text: fields.join(d.delimiter) });
       });
       break;

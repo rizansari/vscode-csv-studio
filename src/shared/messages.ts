@@ -74,6 +74,8 @@ export type Encoding = 'utf8' | 'utf8bom' | 'utf16le' | 'latin1';
 export interface ExportRequest {
   source: ExportSource;
   rows?: number[];
+  /** With source "view": only view positions start..end (inclusive), e.g. a selected cell range. */
+  viewRange?: [number, number];
   /** Restrict to these display columns (by index); all when omitted. */
   columns?: number[];
   target: ExportTarget;
@@ -107,6 +109,8 @@ export type WebviewMessage =
   | { type: 'edit'; op: CsvEditOp }
   /** Sort the file permanently in the current view order (only when nothing is filtered out). */
   | { type: 'applySort' }
+  /** Empty the cells of a selected range (view positions start..end, inclusive). */
+  | { type: 'clearRange'; start: number; end: number; cols: number[] }
   | { type: 'setType'; col: number; colType: ColType | null }
   | { type: 'setDialect'; dialect: Partial<Dialect> }
   | { type: 'sql'; reqId: number; query: string; record: boolean }

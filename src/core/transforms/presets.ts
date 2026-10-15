@@ -1,6 +1,6 @@
 import * as crypto from 'crypto';
 import * as zlib from 'zlib';
-import { parseDate, type DateOrder } from '../types';
+import { dateTimeOffset, parseDate, parseDateTime, type DateOrder } from '../types';
 import type { ParamSpec, TransformContext, TransformInfo } from './types';
 
 export interface Preset extends TransformInfo {
@@ -119,14 +119,37 @@ function pad(n: number, w = 2) {
   return String(n).padStart(w, '0');
 }
 
-/** Formats a timestamp with YYYY, MM, DD, HH, mm, ss tokens (UTC), or "iso", "epoch", "epoch-ms". */
-export function formatDate(ms: number, pattern: string): string {
-  const d = new Date(ms);
-  if (pattern === 'iso') return d.toISOString();
+function zone(offsetMin: number): string {
+  if (!offsetMin) return 'Z';
+  const a = Math.abs(offsetMin);
+  return `${offsetMin < 0 ? '-' : '+'}${pad(Math.floor(a / 60))}:${pad(a % 60)}`;
+}
+
+/**
+ * Formats a timestamp with YYYY, MM, DD, HH, mm, ss, SSS (milliseconds) and Z (zone, e.g. +03:00)
+ * tokens, or "iso", "epoch", "epoch-ms". Wall-clock fields are shown at `offsetMin` (default UTC).
+ */
+export function formatDate(ms: number, pattern: string, offsetMin = 0): string {
   if (pattern === 'epoch') return String(Math.floor(ms / 1000));
   if (pattern === 'epoch-ms') return String(ms);
-  return pattern.replace(/YYYY|MM|DD|HH|mm|ss/g, (t) =>
-    t === 'YYYY' ? String(d.getUTCFullYear()) : t === 'MM' ? pad(d.getUTCMonth() + 1) : t === 'DD' ? pad(d.getUTCDate()) : t === 'HH' ? pad(d.getUTCHours()) : t === 'mm' ? pad(d.getUTCMinutes()) : pad(d.getUTCSeconds()),
+  const d = new Date(ms + offsetMin * 60_000);
+  if (pattern === 'iso') pattern = 'YYYY-MM-DDTHH:mm:ss.SSSZ';
+  return pattern.replace(/YYYY|SSS|MM|DD|HH|mm|ss|Z/g, (t) =>
+    t === 'YYYY'
+      ? String(d.getUTCFullYear())
+      : t === 'SSS'
+        ? pad(d.getUTCMilliseconds(), 3)
+        : t === 'MM'
+          ? pad(d.getUTCMonth() + 1)
+          : t === 'DD'
+            ? pad(d.getUTCDate())
+            : t === 'HH'
+              ? pad(d.getUTCHours())
+              : t === 'mm'
+                ? pad(d.getUTCMinutes())
+                : t === 'ss'
+                  ? pad(d.getUTCSeconds())
+                  : zone(offsetMin),
   );
 }
 
@@ -134,6 +157,8 @@ export function parseAnyDate(s: string, order: DateOrder | 'auto'): number | nul
   const t = s.trim();
   if (/^\d{10}$/.test(t)) return Number(t) * 1000;
   if (/^\d{13}$/.test(t)) return Number(t);
+  const dt = parseDateTime(t);
+  if (dt !== null) return dt;
   for (const o of order === 'auto' ? (['ymd', 'dmy', 'mdy'] as const) : [order]) {
     const ms = parseDate(t, o);
     if (ms !== null) return ms;
@@ -167,7 +192,9 @@ function ivFrom(p: Record<string, string>, ctx: TransformContext, encoding: stri
   return undefined;
 }
 
-const titleCase = (s: string) => s.toLowerCase().replace(/(^|[\s\-_'])(\p{L})/gu, (_, a: string, b: string) => a + b.toUpperCase());
+const ZONE_PARAM: ParamSpec = { name: 'zone', label: 'Time zone', type: 'select', options: ['UTC', 'keep offset'], default: 'UTC' };
+
+const titleCase =(s: string) => s.toLowerCase().replace(/(^|[\s\-_'])(\p{L})/gu, (_, a: string, b: string) => a + b.toUpperCase());
 
 export const PRESETS: Preset[] = [
   // ---- Crypto
@@ -359,13 +386,31 @@ export const PRESETS: Preset[] = [
     description: 'Parse dates (ISO, d/m/y, m/d/y, epoch) and write them in a new format.',
     params: [
       { name: 'inputOrder', label: 'Input order', type: 'select', options: ['auto', 'ymd', 'dmy', 'mdy'], default: 'auto' },
-      { name: 'format', label: 'Output format', type: 'text', default: 'YYYY-MM-DD', placeholder: 'YYYY-MM-DD HH:mm:ss, iso, epoch, epoch-ms' },
+      { name: 'format', label: 'Output format', type: 'text', default: 'YYYY-MM-DD', placeholder: 'YYYY-MM-DD HH:mm:ss.SSS Z, iso, epoch, epoch-ms' },
+      ZONE_PARAM,
     ],
     run(v, p) {
       if (!v.trim()) return v;
       const ms = parseAnyDate(v, (p.inputOrder || 'auto') as DateOrder | 'auto');
       if (ms === null) throw new Error('Unrecognised date');
-      return formatDate(ms, p.format || 'YYYY-MM-DD');
+      return formatDate(ms, p.format || 'YYYY-MM-DD', p.zone === 'keep offset' ? dateTimeOffset(v) : 0);
+    },
+  },
+  {
+    id: 'to-datetime',
+    label: 'Convert to datetime',
+    group: 'Values',
+    description: 'Turn date/time text (e.g. "2024-10-30 07:56:43.972 +0300", d/m/y, epoch) into a standard datetime.',
+    params: [
+      { name: 'format', label: 'Output format', type: 'select', options: ['iso', 'YYYY-MM-DD HH:mm:ss', 'YYYY-MM-DD HH:mm:ss.SSS', 'YYYY-MM-DD HH:mm:ssZ', 'epoch', 'epoch-ms'], default: 'iso' },
+      { ...ZONE_PARAM, default: 'keep offset' },
+      { name: 'inputOrder', label: 'Input order (d/m/y dates)', type: 'select', options: ['auto', 'ymd', 'dmy', 'mdy'], default: 'auto' },
+    ],
+    run(v, p) {
+      if (!v.trim()) return v;
+      const ms = parseAnyDate(v, (p.inputOrder || 'auto') as DateOrder | 'auto');
+      if (ms === null) throw new Error('Unrecognised date/time');
+      return formatDate(ms, p.format || 'iso', p.zone === 'UTC' ? 0 : dateTimeOffset(v));
     },
   },
   {
